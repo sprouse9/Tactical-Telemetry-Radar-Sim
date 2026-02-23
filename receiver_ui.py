@@ -29,7 +29,6 @@ class UdpReceiver:
                 msg = json.loads(data.decode("utf-8", errors="replace"))
                 msgs.append(msg)
             except Exception:
-                # ignore malformed packets for demo robustness
                 pass
         return msgs
 
@@ -84,10 +83,6 @@ class Recorder:
         self.file = None
 
     def write(self, msg: dict):
-        """
-        JSON Lines format. Adds _rx_time so replay can preserve timing.
-        Writes one line per incoming message and flushes immediately.
-        """
         if not self.enabled or not self.file:
             return
         out = dict(msg)
@@ -165,12 +160,31 @@ class Replayer:
 
 def main():
     pygame.init()
-    W, H = 800, 600
+
+    # Window and layout
+    W, H = 1075, 600
+    RADAR_W = 760
+    PANEL_W = W - RADAR_W
+    HUD_HEIGHT = 100  # top strip for radar HUD
+
     screen = pygame.display.set_mode((W, H))
     pygame.display.set_caption("PORTS Tactical Receiver (UDP + Pygame)")
     clock = pygame.time.Clock()
+
     font = pygame.font.SysFont("Courier", 18)
     small = pygame.font.SysFont("Courier", 14)
+    tiny = pygame.font.SysFont("Courier", 13)
+
+    # Radar coordinate/world area matches sender's world dimensions
+    WORLD_W, WORLD_H = 800, 600
+
+    def world_to_radar(x, y):
+        """
+        Map sender world coords (0..800, 0..600) into left radar pane.
+        """
+        rx = int((x / WORLD_W) * (RADAR_W - 1))
+        ry = int((y / WORLD_H) * (H - 1))
+        return rx, ry
 
     listen_port = 30001
     rx = UdpReceiver(listen_port=listen_port)
@@ -186,15 +200,12 @@ def main():
     recorder = Recorder()
     replayer = Replayer()
     capture_path = "capture.jsonl"
-    mode = "LIVE"  # LIVE or REPLAY
+    mode = "LIVE"
 
     # Stale detection
     stale_seconds = 2.0
 
-    # HUD safety region (top strip)
-    HUD_HEIGHT = 100
-
-    # Packet / telemetry stats
+    # Packet stats
     msg_count_total = 0
     msg_count_window = 0
     msg_rate = 0.0
@@ -214,11 +225,9 @@ def main():
         if msg.get("msg_type") != "EntityState":
             return
 
-        # Message counters
         msg_count_total += 1
         msg_count_window += 1
 
-        # Sequence tracking (sender uses same seq across multiple entities per tick)
         try:
             seq = int(msg.get("seq"))
             if max_seq_seen is None:
@@ -228,8 +237,6 @@ def main():
                 if gap > 1:
                     seq_drop_est += (gap - 1)
                 max_seq_seen = seq
-            # seq == max_seq_seen is normal (multiple entity messages same tick)
-            # seq < max_seq_seen can happen in replay/out-of-order conditions; ignore
         except Exception:
             pass
 
@@ -255,23 +262,19 @@ def main():
                     show_heading = not show_heading
                 elif event.key == pygame.K_l:
                     show_labels = not show_labels
-
                 elif event.key == pygame.K_r:
-                    # Record toggle
                     if recorder.enabled:
                         recorder.stop()
                     else:
                         recorder.start(capture_path)
-
                 elif event.key == pygame.K_p:
-                    # Replay toggle
                     if mode == "REPLAY":
                         replayer.stop()
                         mode = "LIVE"
                     else:
                         ok = replayer.load(capture_path)
                         if ok:
-                            tracks.clear()  # clean replay
+                            tracks.clear()
                             replayer.start()
                             mode = "REPLAY"
 
@@ -288,7 +291,7 @@ def main():
             for msg in msgs:
                 process_message(msg, rx_time=now)
 
-        # Update msg/sec once per second
+        # Update msg/sec
         rate_now = time.time()
         dt_rate = rate_now - msg_rate_timer
         if dt_rate >= 1.0:
@@ -301,12 +304,33 @@ def main():
         # --- render ---
         screen.fill((5, 10, 30))
 
-        # Radar rings
-        center = (W // 2, H // 2)
-        for r in range(100, 600, 100):
+        # Radar pane background
+        pygame.draw.rect(screen, (5, 10, 30), (0, 0, RADAR_W, H))
+
+        # Radar rings (fit inside usable radar area below the HUD)
+        radar_left = 0
+        radar_top = HUD_HEIGHT
+        radar_right = RADAR_W
+        radar_bottom = H
+
+        radar_cx = (radar_left + radar_right) // 2
+        radar_cy = (radar_top + radar_bottom) // 2
+        center = (radar_cx, radar_cy)
+
+        usable_w = radar_right - radar_left
+        usable_h = radar_bottom - radar_top
+
+        max_r = max_r = (usable_w // 2) - 12 # min(usable_w // 2, usable_h // 2) - 12
+        ring_step = 60  # try 70 or 80
+
+        for r in range(ring_step, max_r + 1, ring_step):
             pygame.draw.circle(screen, (30, 40, 70), center, r, 1)
 
-        # Draw tracks
+        # Crosshair (only across usable radar region)
+        pygame.draw.line(screen, (25, 35, 60), (radar_cx, radar_top), (radar_cx, radar_bottom), 1)
+        pygame.draw.line(screen, (25, 35, 60), (radar_left, radar_cy), (radar_right, radar_cy), 1)
+
+        # Draw tracks on radar pane
         for eid in sorted(tracks.keys()):
             tr = tracks[eid]
             stale = is_stale(tr, now)
@@ -320,10 +344,11 @@ def main():
                 vec_color = (255, 255, 0)
                 trail_base = (0, 255, 0)
 
-            # Trail
+            # Trail (map world history to radar pane)
             if show_history and len(tr.history) > 1:
                 hist = list(tr.history)
                 for i, pos in enumerate(hist):
+                    px, py = world_to_radar(pos[0], pos[1])
                     alpha = int((i / max(1, len(hist) - 1)) * 140)
                     scale = alpha / 140.0 if 140.0 > 0 else 1.0
                     c = (
@@ -331,18 +356,20 @@ def main():
                         int(trail_base[1] * scale),
                         int(trail_base[2] * scale),
                     )
-                    pygame.draw.circle(screen, c, pos, 2)
+                    if py >= HUD_HEIGHT:
+                        pygame.draw.circle(screen, c, (px, py), 2)
 
-            # Render position clamp (keeps symbols out of HUD strip)
-            rx_x = int(tr.x)
-            rx_y = int(tr.y)
+            # Map current world pos to radar pane
+            rx_x, rx_y = world_to_radar(tr.x, tr.y)
+
+            # Keep symbols out of radar HUD strip
             if rx_y < HUD_HEIGHT:
                 rx_y = HUD_HEIGHT
 
             # Dot
             pygame.draw.circle(screen, dot_color, (rx_x, rx_y), 6)
 
-            # Vector
+            # Heading vector
             if show_heading:
                 rad = math.radians(tr.heading)
                 vx = math.sin(rad) * 16
@@ -360,26 +387,22 @@ def main():
                 label = f"{tr.entity_id}"
                 if stale:
                     label += " (stale)"
-
                 lx = rx_x + 8
                 ly = rx_y - 10
-
-                # Keep labels away from HUD and inside window
                 if ly < HUD_HEIGHT:
                     ly = HUD_HEIGHT
-                lx = max(10, min(lx, W - 120))
+                lx = max(10, min(lx, RADAR_W - 140))
                 ly = max(HUD_HEIGHT, min(ly, H - 20))
-
                 screen.blit(small.render(label, True, (220, 220, 220)), (lx, ly))
 
-        # HUD background strip (draw last so old captures can't cover the HUD)
-        pygame.draw.rect(screen, (5, 10, 30), (0, 0, W, HUD_HEIGHT))
+        # Radar HUD strip (draw after tracks so it always stays readable)
+        pygame.draw.rect(screen, (5, 10, 30), (0, 0, RADAR_W, HUD_HEIGHT))
 
-        # HUD text (3 lines)
+        # Radar HUD text
         hud1 = f"MODE: {mode}   PORT: {listen_port}   ENTITIES: {len(tracks)}   STALE: {stale_count}"
         rec = "ON" if recorder.enabled else "OFF"
         seq_text = "-" if max_seq_seen is None else str(max_seq_seen)
-        hud2 = f"MSG/S: {msg_rate:5.1f}   TOTAL MSG: {msg_count_total}   LAST SEQ: {seq_text}   DROP EST: {seq_drop_est}"
+        hud2 = f"MSG/S: {msg_rate:5.1f}   TOTAL: {msg_count_total}   SEQ: {seq_text}   DROP: {seq_drop_est}"
         hud3 = f"[H] Trail  [V] Vector  [L] Labels   [R] Record({rec})  [P] Replay"
 
         screen.blit(font.render(hud1, True, (200, 200, 200)), (20, 20))
@@ -391,6 +414,61 @@ def main():
                 font.render("REPLAY DONE (press P to return to LIVE)", True, (180, 180, 180)),
                 (20, 95),
             )
+
+        # --- Right-side entity panel ---
+        panel_x = RADAR_W
+        pygame.draw.rect(screen, (18, 22, 38), (panel_x, 0, PANEL_W, H))
+        pygame.draw.line(screen, (60, 70, 100), (panel_x, 0), (panel_x, H), 2)
+
+        # Panel title
+        screen.blit(font.render("ENTITY LIST", True, (220, 220, 220)), (panel_x + 12, 12))
+
+        # Column headers (monospace, aligned to row formatting)
+        y0 = 42
+        header_text = f"{'ID':<6}{'TYPE':<7}{'X,Y':<9}{'HDG':<5}{'SPD':<4}"
+        screen.blit(tiny.render(header_text, True, (180, 180, 180)), (panel_x + 22, y0))
+
+        # Rows
+        row_y = y0 + 22
+        row_h = 22
+
+        sorted_ids = sorted(tracks.keys())
+        max_rows = (H - row_y - 70) // row_h  # leave room for footer/help
+        visible_ids = sorted_ids[:max_rows]
+
+        for i, eid in enumerate(visible_ids):
+            tr = tracks[eid]
+            stale = is_stale(tr, now)
+
+            # alternating row background
+            if i % 2 == 0:
+                pygame.draw.rect(screen, (22, 27, 45), (panel_x + 6, row_y - 2, PANEL_W - 12, row_h))
+
+            txt_color = (255, 120, 120) if stale else (200, 230, 200)
+
+            # tiny status dot
+            dot_c = (255, 80, 80) if stale else (0, 220, 120)
+            pygame.draw.circle(screen, dot_c, (panel_x + 14, row_y + 8), 4)
+
+            # text columns
+            row_text = (
+                f"{tr.entity_id:<6}"          # e.g. '1001  '
+                f"{str(tr.entity_type)[:6]:<7}"  # e.g. 'SUB    '
+                f"{int(tr.x):>3},{int(tr.y):<3}  "
+                f"{int(tr.heading):03d}  "
+                f"{tr.speed:>3.1f}"
+            )
+
+            screen.blit(tiny.render(row_text, True, txt_color), (panel_x + 22, row_y))
+
+            row_y += row_h
+
+        # Panel footer / details
+        footer_y = H - 78
+        pygame.draw.line(screen, (60, 70, 100), (panel_x + 8, footer_y - 8), (W - 8, footer_y - 8), 1)
+        screen.blit(tiny.render(f"Tracks shown: {len(visible_ids)}/{len(sorted_ids)}", True, (180, 180, 180)), (panel_x + 10, footer_y))
+        screen.blit(tiny.render("Red row = stale", True, (180, 180, 180)), (panel_x + 10, footer_y + 18))
+        screen.blit(tiny.render("World: 800x600 mapped to radar pane", True, (140, 140, 160)), (panel_x + 10, footer_y + 36))
 
         pygame.display.flip()
         clock.tick(60)
