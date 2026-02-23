@@ -12,17 +12,22 @@ class SimEngine:
         self.sensor_failure = False
 
     def update(self):
-        # 1. Store history for breadcrumbs
-        self.history.append((int(self.x), int(self.y)))
-        
-        # 2. Update Kinematics
+        # Move the target
+        # 1. Update the math
         rad = math.radians(self.heading)
         self.x += math.sin(rad) * self.speed
         self.y -= math.cos(rad) * self.speed
-        
-        # Screen Wrap
-        self.x %= 800
-        self.y %= 600
+
+        # 2. Reflection Logic (Mirroring)
+        if self.y <= 50 or self.y >= 550: # Top or Bottom
+            self.heading = (180 - self.heading) % 360
+            # Nudge to prevent "Sticky Wall"
+            self.y = 51 if self.y <= 50 else 549
+
+        if self.x <= 50 or self.x >= 750: # Left or Right
+            self.heading = (360 - self.heading) % 360
+            # Nudge to prevent "Sticky Wall"
+            self.x = 51 if self.x <= 50 else 749
 
 # --- THE APP ---
 def main():
