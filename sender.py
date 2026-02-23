@@ -41,7 +41,11 @@ class UdpSimSender:
 
         # Sim bounds
         self.w, self.h = 800, 600
-        self.margin = 50
+        # Sim bounds (reserve space for HUD at top)
+        self.left_margin = 20
+        self.right_margin = 20
+        self.top_margin = 80     # <-- key change
+        self.bottom_margin = 20
 
         self.seq = 0
         self.entities = self._init_entities(count=entities)
@@ -53,18 +57,18 @@ class UdpSimSender:
         for i in range(count):
             eid = 1001 + i
             etype = types[i % len(types)]
-            x = self.rng.uniform(self.margin + 10, self.w - self.margin - 10)
-            y = self.rng.uniform(self.margin + 10, self.h - self.margin - 10)
+            x = self.rng.uniform(self.left_margin + 10, self.w - self.right_margin - 10)
+            y = self.rng.uniform(self.top_margin + 10, self.h - self.bottom_margin - 10)
             heading = self.rng.uniform(0, 360)
             speed = self.rng.uniform(0.8, 4.0) if etype != "BUI" else 0.0
             out.append(Entity(eid, etype, x, y, heading, speed))
         return out
 
     def _bounce(self, ent: Entity):
-        left = self.margin
-        right = self.w - self.margin
-        top = self.margin
-        bottom = self.h - self.margin
+        left = self.left_margin
+        right = self.w - self.right_margin
+        top = self.top_margin
+        bottom = self.h - self.bottom_margin
 
         # Bounce top/bottom (invert Y velocity)
         if ent.y <= top or ent.y >= bottom:
