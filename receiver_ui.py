@@ -29,6 +29,7 @@ class UdpReceiver:
                 msg = json.loads(data.decode("utf-8", errors="replace"))
                 msgs.append(msg)
             except Exception:
+                # ignore malformed packets for demo robustness
                 pass
         return msgs
 
@@ -85,7 +86,7 @@ class Recorder:
     def write(self, msg: dict):
         """
         JSON Lines format. Adds _rx_time so replay can preserve timing.
-        Writes a line per message and flushes immediately (fine for demo rates).
+        Writes one line per incoming message and flushes immediately.
         """
         if not self.enabled or not self.file:
             return
@@ -191,28 +192,62 @@ def main():
     stale_seconds = 2.0
 
     # HUD safety region (top strip)
-    HUD_HEIGHT = 95
+    HUD_HEIGHT = 100
 
-    def is_stale(track: TrackState, now: float) -> bool:
+    # Packet / telemetry stats
+    msg_count_total = 0
+    msg_count_window = 0
+    msg_rate = 0.0
+    msg_rate_timer = time.time()
+
+    max_seq_seen = None
+    seq_drop_est = 0
+
+    def is_stale(track: TrackState, now_ts: float) -> bool:
         if track.last_rx_time <= 0:
             return True
-        return (now - track.last_rx_time) > stale_seconds
+        return (now_ts - track.last_rx_time) > stale_seconds
 
     def process_message(msg: dict, rx_time: float):
+        nonlocal msg_count_total, msg_count_window, max_seq_seen, seq_drop_est
+
         if msg.get("msg_type") != "EntityState":
             return
+
+        # Message counters
+        msg_count_total += 1
+        msg_count_window += 1
+
+        # Sequence tracking (sender uses same seq across multiple entities per tick)
+        try:
+            seq = int(msg.get("seq"))
+            if max_seq_seen is None:
+                max_seq_seen = seq
+            elif seq > max_seq_seen:
+                gap = seq - max_seq_seen
+                if gap > 1:
+                    seq_drop_est += (gap - 1)
+                max_seq_seen = seq
+            # seq == max_seq_seen is normal (multiple entity messages same tick)
+            # seq < max_seq_seen can happen in replay/out-of-order conditions; ignore
+        except Exception:
+            pass
+
         eid = msg.get("entity_id", None)
         if eid is None:
             return
+
         if eid not in tracks:
             tracks[eid] = TrackState(history_len=25)
+
         tracks[eid].update_from_msg(msg, rx_time)
 
     while True:
-        # --- inputs ---
+        # --- input ---
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return
+
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_h:
                     show_history = not show_history
@@ -221,28 +256,28 @@ def main():
                 elif event.key == pygame.K_l:
                     show_labels = not show_labels
 
-                # Record toggle
                 elif event.key == pygame.K_r:
+                    # Record toggle
                     if recorder.enabled:
                         recorder.stop()
                     else:
                         recorder.start(capture_path)
 
-                # Replay toggle
                 elif event.key == pygame.K_p:
+                    # Replay toggle
                     if mode == "REPLAY":
                         replayer.stop()
                         mode = "LIVE"
                     else:
                         ok = replayer.load(capture_path)
                         if ok:
-                            tracks.clear()
+                            tracks.clear()  # clean replay
                             replayer.start()
                             mode = "REPLAY"
 
         now = time.time()
 
-        # --- ingest messages ---
+        # --- ingest ---
         if mode == "LIVE":
             msgs = rx.poll_messages()
             for msg in msgs:
@@ -252,6 +287,16 @@ def main():
             msgs = replayer.poll()
             for msg in msgs:
                 process_message(msg, rx_time=now)
+
+        # Update msg/sec once per second
+        rate_now = time.time()
+        dt_rate = rate_now - msg_rate_timer
+        if dt_rate >= 1.0:
+            msg_rate = msg_count_window / dt_rate
+            msg_count_window = 0
+            msg_rate_timer = rate_now
+
+        stale_count = sum(1 for tr in tracks.values() if is_stale(tr, now))
 
         # --- render ---
         screen.fill((5, 10, 30))
@@ -288,7 +333,7 @@ def main():
                     )
                     pygame.draw.circle(screen, c, pos, 2)
 
-            # Render position (do not let symbols draw in HUD strip)
+            # Render position clamp (keeps symbols out of HUD strip)
             rx_x = int(tr.x)
             rx_y = int(tr.y)
             if rx_y < HUD_HEIGHT:
@@ -310,7 +355,7 @@ def main():
                     2,
                 )
 
-            # Label (also clamp away from HUD strip)
+            # Label
             if show_labels:
                 label = f"{tr.entity_id}"
                 if stale:
@@ -318,27 +363,34 @@ def main():
 
                 lx = rx_x + 8
                 ly = rx_y - 10
+
+                # Keep labels away from HUD and inside window
                 if ly < HUD_HEIGHT:
                     ly = HUD_HEIGHT
-
-                # Keep label on screen horizontally a bit
                 lx = max(10, min(lx, W - 120))
                 ly = max(HUD_HEIGHT, min(ly, H - 20))
 
                 screen.blit(small.render(label, True, (220, 220, 220)), (lx, ly))
 
-        # HUD background strip (guarantees readability even during replay of old captures)
+        # HUD background strip (draw last so old captures can't cover the HUD)
         pygame.draw.rect(screen, (5, 10, 30), (0, 0, W, HUD_HEIGHT))
 
-        # HUD
-        hud1 = f"MODE: {mode}   PORT: {listen_port}   ENTITIES: {len(tracks)}"
+        # HUD text (3 lines)
+        hud1 = f"MODE: {mode}   PORT: {listen_port}   ENTITIES: {len(tracks)}   STALE: {stale_count}"
         rec = "ON" if recorder.enabled else "OFF"
-        hud2 = f"[H] Trail  [V] Vector  [L] Labels   [R] Record({rec})  [P] Replay"
+        seq_text = "-" if max_seq_seen is None else str(max_seq_seen)
+        hud2 = f"MSG/S: {msg_rate:5.1f}   TOTAL MSG: {msg_count_total}   LAST SEQ: {seq_text}   DROP EST: {seq_drop_est}"
+        hud3 = f"[H] Trail  [V] Vector  [L] Labels   [R] Record({rec})  [P] Replay"
+
         screen.blit(font.render(hud1, True, (200, 200, 200)), (20, 20))
-        screen.blit(font.render(hud2, True, (100, 100, 100)), (20, 45))
+        screen.blit(font.render(hud2, True, (170, 170, 170)), (20, 45))
+        screen.blit(font.render(hud3, True, (100, 100, 100)), (20, 70))
 
         if mode == "REPLAY" and not replayer.enabled:
-            screen.blit(font.render("REPLAY DONE (press P to return to LIVE)", True, (180, 180, 180)), (20, 70))
+            screen.blit(
+                font.render("REPLAY DONE (press P to return to LIVE)", True, (180, 180, 180)),
+                (20, 95),
+            )
 
         pygame.display.flip()
         clock.tick(60)

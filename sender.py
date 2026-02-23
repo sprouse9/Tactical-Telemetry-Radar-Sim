@@ -44,7 +44,7 @@ class UdpSimSender:
         # Sim bounds (reserve space for HUD at top)
         self.left_margin = 20
         self.right_margin = 20
-        self.top_margin = 80     # <-- key change
+        self.top_margin = 110     # <-- key change
         self.bottom_margin = 20
 
         self.seq = 0
