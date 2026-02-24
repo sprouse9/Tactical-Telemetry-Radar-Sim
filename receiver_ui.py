@@ -452,7 +452,7 @@ def main():
             rec = "ON" if recorder.enabled else "OFF"
             seq_text = "-" if max_seq_seen is None else str(max_seq_seen)
             hud2 = f"MSG/S: {msg_rate:5.1f}   TOTAL: {msg_count_total}   SEQ: {seq_text}   DROP: {seq_drop_est}"
-            hud3 = f"[H] Trail  [V] Vector  [L] Labels   [R] Record({rec})  [P] Replay   [ESC] Quit"
+            hud3 = f"[H]Trail  [V]Vector  [L]Labels  [R]Record({rec})  [P]Replay  [ESC]Quit"
 
             screen.blit(font.render(hud1, True, (200, 200, 200)), (20, 20))
             screen.blit(font.render(hud2, True, (170, 170, 170)), (20, 45))
@@ -465,23 +465,21 @@ def main():
                 )
 
             # --- Right-side entity panel ---
-            panel_x = RADAR_W
+            panel_x = RADAR_W+35
             pygame.draw.rect(screen, (18, 22, 38), (panel_x, 0, PANEL_W, H))
             pygame.draw.line(screen, (60, 70, 100), (panel_x, 0), (panel_x, H), 2)
 
             # Panel title
             screen.blit(font.render("ENTITY LIST", True, (220, 220, 220)), (panel_x + 12, 12))
 
-            # Column headers (monospace, aligned to row formatting)
-            y0 = PANEL_HEADER_Y
-            header_text = (
-                f"{'ID':<{ID_W}}"
-                f"{'TYPE':<{TYPE_W}}"
-                f"{'X,Y':<{XY_W}}"
-                f"{'HDG':<{HDG_W}}"
-                f"{'SPD':<{SPD_W}}"
-            )
-            screen.blit(tiny.render(header_text, True, (180, 180, 180)), (panel_x + 22, y0))
+            # NEW: Interaction Hint (Placed right under the title)
+            hint_text = "Click row to select/lock"
+            screen.blit(tiny.render(hint_text, True, (100, 130, 160)), (panel_x + 12, 32))
+
+            # Column headers (Shifted down slightly to accommodate the hint)
+            header_y = 48
+            header_text = f"{'ID':<{ID_W}}{'TYPE':<{TYPE_W}}{'X,Y':<{XY_W}}{'HDG':<{HDG_W}}{'SPD':<{SPD_W}}"
+            screen.blit(tiny.render(header_text, True, (180, 180, 180)), (panel_x + 22, header_y))
 
             # Rows
             row_y = PANEL_ROW_START_Y
@@ -531,31 +529,80 @@ def main():
 
                 row_y += row_h
 
-            # Panel footer / details
-            footer_y = H - 96
-            pygame.draw.line(screen, (60, 70, 100), (panel_x + 8, footer_y - 8), (W - 8, footer_y - 8), 1)
+            # --- Right-side entity panel footer + selected detail block (single render pass) ---
 
-            screen.blit(
-                tiny.render(f"Tracks shown: {len(visible_ids)}/{len(sorted_ids)}", True, (180, 180, 180)),
-                (panel_x + 10, footer_y),
-            )
-            screen.blit(tiny.render("Red row = stale", True, (180, 180, 180)), (panel_x + 10, footer_y + 18))
-            screen.blit(
-                tiny.render("Click row to select/highlight", True, (160, 190, 220)),
-                (panel_x + 10, footer_y + 36),
-            )
+            # Bottom help line (small/dim)
+            help_y = H - 20
+            help_text = f"TRACKS {len(visible_ids)}/{len(sorted_ids)}   STALE=RED"
+            screen.blit(tiny.render(help_text, True, (80, 90, 110)), (panel_x + 10, help_y))
 
+            # Detail block starts above help line
+            detail_start_y = H - 100
+            pygame.draw.line(screen, (60, 70, 100), (panel_x + 8, detail_start_y), (W - 8, detail_start_y), 1)
+
+            # Selected entity detail block
             if selected_entity_id in tracks:
                 tr = tracks[selected_entity_id]
-                sel_line = (
-                    f"SEL {tr.entity_id} {tr.entity_type}  "
-                    f"X={int(tr.x)} Y={int(tr.y)}  "
-                    f"HDG={int(tr.heading):03d}  SPD={tr.speed:.1f}"
-                )
-            else:
-                sel_line = "SEL: none"
 
-            screen.blit(tiny.render(sel_line, True, (200, 220, 255)), (panel_x + 10, footer_y + 54))
+                # Radar position for selected track
+                rx_x, rx_y = world_to_radar(tr.x, tr.y)
+                if rx_y < HUD_HEIGHT:
+                    rx_y = HUD_HEIGHT
+
+                # Range / bearing from radar center (screen-space estimate)
+                dx = rx_x - radar_cx
+                dy = rx_y - radar_cy
+                range_val = math.sqrt(dx * dx + dy * dy) * 10.0
+                bearing_deg = math.degrees(math.atan2(dx, -dy)) % 360.0
+
+                # Fixed line positions (no overlap)
+                line1_y = detail_start_y + 8
+                line2_y = detail_start_y + 28
+                line3_y = detail_start_y + 48
+
+                screen.blit(
+                    tiny.render(f"ID: {tr.entity_id}  [{tr.entity_type}]", True, (200, 220, 255)),
+                    (panel_x + 10, line1_y),
+                )
+                screen.blit(
+                    tiny.render(f"RNG: {int(range_val)}m  BRG: {int(bearing_deg):03d}\N{DEGREE SIGN}", True, (150, 180, 255)),
+                    (panel_x + 10, line2_y),
+                )
+                screen.blit(
+                    tiny.render(f"HDG: {int(tr.heading):03d}\N{DEGREE SIGN}  SPD: {tr.speed:.1f} kts", True, (120, 160, 255)),
+                    (panel_x + 10, line3_y),
+                )
+
+                # Tactical selection brackets on radar
+                rect_size = 20
+                half = rect_size // 2
+                pygame.draw.rect(screen, (120, 200, 255), (rx_x - half, rx_y - half, rect_size, rect_size), 1)
+
+                bracket_len = 5
+                c = (0, 255, 255)
+
+                # Top-left
+                pygame.draw.line(screen, c, (rx_x - half, rx_y - half), (rx_x - half + bracket_len, rx_y - half), 2)
+                pygame.draw.line(screen, c, (rx_x - half, rx_y - half), (rx_x - half, rx_y - half + bracket_len), 2)
+
+                # Top-right
+                pygame.draw.line(screen, c, (rx_x + half, rx_y - half), (rx_x + half - bracket_len, rx_y - half), 2)
+                pygame.draw.line(screen, c, (rx_x + half, rx_y - half), (rx_x + half, rx_y - half + bracket_len), 2)
+
+                # Bottom-left
+                pygame.draw.line(screen, c, (rx_x - half, rx_y + half), (rx_x - half + bracket_len, rx_y + half), 2)
+                pygame.draw.line(screen, c, (rx_x - half, rx_y + half), (rx_x - half, rx_y + half - bracket_len), 2)
+
+                # Bottom-right
+                pygame.draw.line(screen, c, (rx_x + half, rx_y + half), (rx_x + half - bracket_len, rx_y + half), 2)
+                pygame.draw.line(screen, c, (rx_x + half, rx_y + half), (rx_x + half, rx_y + half - bracket_len), 2)
+
+            else:
+                screen.blit(
+                    tiny.render("SELECTED: NONE", True, (100, 100, 100)),
+                    (panel_x + 10, detail_start_y + 8),
+                )
+
 
             pygame.display.flip()
             clock.tick(60)
