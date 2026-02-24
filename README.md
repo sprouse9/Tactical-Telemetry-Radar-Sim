@@ -55,6 +55,12 @@ Example:
 python sender.py --entities 8 --hz 20
 ```
 
+
+
+<img src="images/sender output.png" alt="sender output"/>
+
+
+
 ---
 
 ### receiver_ui.py
