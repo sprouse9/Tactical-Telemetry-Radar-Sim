@@ -1,2 +1,8 @@
-capture.jsonl
+capture*.jsonl
+*.jsonl
 .DS_Store
+.vs/
+**/bin/
+**/obj/
+*.user
+*.suo
