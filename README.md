@@ -1,10 +1,18 @@
-# PORTS Tactical Simulation Demo (UDP + Pygame)
+# PORTS Tactical Simulation Demo (UDP Telemetry + Radar UI)
 
 https://github.com/user-attachments/assets/aab41ca1-fe54-4374-993b-74958d4132dc
 
 A lightweight distributed simulation demo modeling real-time tactical track updates over UDP.
 
 The system simulates multiple moving entities broadcasting telemetry, while a separate receiver renders a radar-style display with track vectors, labels, and stale detection.
+
+This repo currently includes **two receiver UI implementations**:
+- **Python/Pygame receiver** (`receiver_ui.py`)
+- **.NET 10 WPF receiver** (WPF project under `dotnet/`)
+
+The **sender remains Python** (`sender.py`) and can drive either receiver.
+
+<img src="images/WPF.PNG" alt="WPF GUI"/>
 
 ---
 
@@ -51,19 +59,15 @@ Configurable parameters:
 - `--hz` → update frequency (broadcast rate)
 
 Example:
-```
+```bash
 python sender.py --entities 8 --hz 20
 ```
 
-
-
 <img src="images/sender output.png" alt="sender output"/>
-
-
 
 ---
 
-### receiver_ui.py
+### receiver_ui.py (Python / Pygame)
 
 - Non-blocking UDP listener
 - Parses JSON datagrams
@@ -79,25 +83,51 @@ Features:
 
 ---
 
-## Quick Start
+### WPF Receiver (.NET 10)
+
+A second receiver UI implementation built in **WPF (.NET 10)**.
+
+- Receives the same UDP JSON datagrams as the Python receiver
+- Displays the same track data (ID/type/position/heading/speed)
+- Radar-style visualization and stale detection
+
+Project location:
+- `dotnet/TacticalReceiver.Wpf/`
+
+The sender remains Python, so the same `sender.py` can drive either UI.
+
+---
+
+## Quick Start (Python Receiver)
 
 Terminal A (Receiver UI):
-```
+```bash
 python receiver_ui.py
 ```
 
 Terminal B (Sender):
-```
+```bash
 python sender.py --entities 8 --hz 20
 ```
 
 ---
 
+## Quick Start (WPF Receiver)
+
+Start the sender:
+```bash
+python sender.py --entities 8 --hz 20
+```
+
+Open the WPF solution/project under `dotnet/` in Visual Studio and run the WPF receiver.
+
+---
+
 ## Controls (receiver_ui.py)
 
-- **H** → Toggle trails  
-- **V** → Toggle heading vectors  
-- **L** → Toggle labels  
+- **H** → Toggle trails
+- **V** → Toggle heading vectors
+- **L** → Toggle labels
 
 ---
 
@@ -122,9 +152,9 @@ The architecture can be extended toward:
 
 - Packet loss simulation
 - Artificial latency injection
-- Predictive motion modeling
+- Predictive motion modeling (dead reckoning)
 - Bearing-rate visualization
-- Alternative UI front-ends (WinForms, Qt, etc.)
+- Additional UI front-ends (WinForms, Qt, etc.)
 
 ---
 
