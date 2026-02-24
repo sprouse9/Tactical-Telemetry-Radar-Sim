@@ -8,7 +8,7 @@
 
     <Grid>
         <Grid.RowDefinitions>
-            <RowDefinition Height="100"/>
+            <RowDefinition Height="90"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
@@ -38,19 +38,30 @@
                 Background="#121626"
                 BorderBrush="#3C4664"
                 BorderThickness="2,0,0,0">
-            <Grid Margin="12">
+            <Grid Margin="8">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="Auto"/>
                     <RowDefinition Height="*"/>
-                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="28"/>
                 </Grid.RowDefinitions>
 
-                <TextBlock Text="ENTITY LIST" Foreground="#DCDCDC" FontFamily="Consolas" FontSize="18" Margin="0,0,0,6"/>
-                <TextBlock Grid.Row="1" Text="Click row to select/lock" Foreground="#6482A0" FontFamily="Consolas" FontSize="12" Margin="0,0,0,10"/>
+                <TextBlock Text="ENTITY LIST"
+                           Foreground="#DCDCDC"
+                           FontFamily="Consolas"
+                           FontSize="18"
+                           Margin="0,0,0,2"/>
+
+                <TextBlock Grid.Row="1"
+                           Text="Click row to select/lock"
+                           Foreground="#6482A0"
+                           FontFamily="Consolas"
+                           FontSize="12"
+                           Margin="0,0,0,4"/>
 
                 <DataGrid x:Name="GridTracks"
                           Grid.Row="2"
+                          Margin="0,2,0,0"
                           AutoGenerateColumns="False"
                           CanUserAddRows="False"
                           IsReadOnly="True"
@@ -76,8 +87,10 @@
 
                 <TextBlock Grid.Row="3" x:Name="Footer"
                            Text="TRACKS 0/0   STALE=RED"
-                           Foreground="#505A6E" FontFamily="Consolas" FontSize="12"
-                           Margin="0,10,0,0"/>
+                           Foreground="#505A6E"
+                           FontFamily="Consolas"
+                           FontSize="12"
+                           VerticalAlignment="Center"/>
             </Grid>
         </Border>
     </Grid>
